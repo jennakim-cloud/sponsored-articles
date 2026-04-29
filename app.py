@@ -6,7 +6,7 @@ import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from pypdf import PdfReader, PdfWriter
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
@@ -14,7 +14,6 @@ from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Image as RLImage, Spacer, Paragraph, PageBreak, Flowable
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
-from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 
 # ─────────────────────────────────────────────
 # 페이지 설정
@@ -277,7 +276,7 @@ def file_to_pil_images(uploaded_file) -> list[Image.Image]:
             return images
 
         # 최종 실패 시 안내 이미지
-        from PIL import ImageDraw
+        from PIL import Image, ImageDraw, ImageFontDraw
         img = Image.new("RGB", (1240, 1754), "white")
         ImageDraw.Draw(img).text(
             (60, 80),
@@ -304,53 +303,66 @@ def pil_to_reportlab_image(pil_img: Image.Image, max_width: float, max_height: f
     return RLImage(buf, width=draw_w, height=draw_h)
 
 
-KOREAN_FONT_NAME = "HYGothic-Medium"
-_korean_font_registered = False
+# ── 한글 폰트 경로 탐색 (시스템에서 자동 선택) ──
+def _find_korean_font_path() -> str | None:
+    candidates = [
+        "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",   # CJK 공통 (현 환경 확인됨)
+        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",        # fonts-nanum 설치 시
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", # Noto CJK
+        "/System/Library/Fonts/AppleSDGothicNeo.ttc",             # macOS
+        "C:/Windows/Fonts/malgun.ttf",                            # Windows
+    ]
+    for path in candidates:
+        try:
+            ImageFont.truetype(path, 20)
+            return path
+        except Exception:
+            continue
+    return None
 
-def register_korean_font():
-    """ReportLab에 한글 CID 폰트 등록 — 중복 등록 방지"""
-    global _korean_font_registered
-    if _korean_font_registered:
-        return
+_KOREAN_FONT_PATH = _find_korean_font_path()
+_LABEL_FONT_SIZE  = 36   # 라벨 텍스트 px (150dpi A4 기준 적당한 크기)
+_LABEL_PADDING    = 18
+
+
+def build_section_label(text: str, styles) -> RLImage:
+    """섹션 라벨을 PIL 이미지로 생성 → ReportLab Image Flowable로 반환.
+    ReportLab 폰트에 의존하지 않아 한글이 항상 정상 출력됨."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm as _mm
+
+    usable_w_pt = A4[0] - 2 * 15 * _mm          # 포인트 단위 usable width
+    dpi_scale   = 150 / 72                        # 포인트 → 150dpi 픽셀
+    img_w_px    = int(usable_w_pt * dpi_scale)
+    img_h_px    = _LABEL_FONT_SIZE + _LABEL_PADDING * 2
+
+    # PIL 이미지 생성
+    img = Image.new("RGB", (img_w_px, img_h_px), (232, 237, 248))
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([0, 0, 7, img_h_px], fill=(79, 142, 247))  # 왼쪽 강조선
+
+    # 폰트 로드
     try:
-        pdfmetrics.registerFont(UnicodeCIDFont(KOREAN_FONT_NAME))
-        _korean_font_registered = True
+        if _KOREAN_FONT_PATH:
+            font = ImageFont.truetype(_KOREAN_FONT_PATH, _LABEL_FONT_SIZE)
+        else:
+            font = ImageFont.load_default()
     except Exception:
-        pass
+        font = ImageFont.load_default()
 
+    draw.text((_LABEL_PADDING + 10, _LABEL_PADDING // 2), text,
+              fill=(26, 26, 46), font=font)
 
-class KoreanLabel(Flowable):
-    """한글 섹션 라벨 — canvas.drawString으로 직접 렌더링 (CID 폰트 호환)"""
-    def __init__(self, text, font_size=13, padding=6):
-        super().__init__()
-        self.text = text
-        self.font_size = font_size
-        self.padding = padding
-        self.height = font_size + padding * 2 + 2
+    # PIL → ReportLab Image Flowable
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
 
-    def wrap(self, available_width, available_height):
-        self.width = available_width
-        return self.width, self.height
+    scale     = usable_w_pt / img_w_px
+    draw_w_pt = usable_w_pt
+    draw_h_pt = img_h_px * scale
 
-    def draw(self):
-        # draw()는 doc.build() 내부에서 호출되므로 여기서 다시 등록 보장
-        register_korean_font()
-        c = self.canv
-        # 배경
-        c.setFillColorRGB(0.91, 0.93, 0.97)
-        c.rect(0, 0, self.width, self.height, fill=1, stroke=0)
-        # 왼쪽 강조선
-        c.setFillColorRGB(0.31, 0.56, 0.97)
-        c.rect(0, 0, 3, self.height, fill=1, stroke=0)
-        # 텍스트
-        c.setFillColorRGB(0.1, 0.1, 0.18)
-        c.setFont(KOREAN_FONT_NAME, self.font_size)
-        c.drawString(self.padding + 6, self.padding + 1, self.text)
-
-
-def build_section_label(text: str, styles) -> KoreanLabel:
-    register_korean_font()
-    return KoreanLabel(text)
+    return RLImage(buf, width=draw_w_pt, height=draw_h_pt)
 
 
 def generate_pdf(sections: dict, filename: str) -> bytes:
