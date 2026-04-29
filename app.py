@@ -110,83 +110,55 @@ with article_tab2:
 
     url_screenshot_bytes = None
 
-    def ensure_playwright_browser() -> str:
-        """chromium 실행 파일 경로를 반환. 없으면 자동 설치 후 반환."""
-        import subprocess, shutil
-        # 이미 설치된 경로 탐색
-        result = subprocess.run(
-            ["python", "-m", "playwright", "install", "--dry-run", "chromium"],
-            capture_output=True, text=True
-        )
-        # 설치 시도
-        install = subprocess.run(
-            ["python", "-m", "playwright", "install", "chromium"],
-            capture_output=True, text=True, timeout=300
-        )
-        if install.returncode != 0:
-            raise RuntimeError(f"브라우저 설치 실패:\n{install.stderr}")
-        return "chromium"
+    def capture_via_screenshotone(url: str, api_key: str) -> bytes:
+        """ScreenshotOne API로 전체 페이지 캡쳐 → PNG bytes 반환"""
+        import requests as req
+        params = {
+            "access_key": api_key,
+            "url": url,
+            "full_page": "true",
+            "viewport_width": "1280",
+            "viewport_height": "900",
+            "format": "png",
+            "block_ads": "true",
+            "block_cookie_banners": "true",
+            "block_trackers": "true",
+            "delay": "2",
+            "timeout": "30",
+        }
+        resp = req.get("https://api.screenshotone.com/take", params=params, timeout=60)
+        if resp.status_code != 200:
+            raise RuntimeError(f"API 오류 {resp.status_code}: {resp.text[:200]}")
+        return resp.content
 
-    def capture_url(url: str) -> bytes:
-        """URL을 전체 페이지 스크린샷으로 캡쳐 → PNG bytes 반환"""
-        from playwright.sync_api import sync_playwright
-
-        with sync_playwright() as p:
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu",
-                    "--disable-software-rasterizer",
-                ]
-            )
-            page = browser.new_page(
-                viewport={"width": 1280, "height": 900},
-                user_agent=(
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                )
-            )
-            page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            time.sleep(3)  # JS 렌더링 대기
-            page.evaluate("window.scrollTo(0, 0)")
-            screenshot = page.screenshot(full_page=True)
-            browser.close()
-        return screenshot
+    # API 키: Streamlit Secrets 또는 사용자 직접 입력
+    api_key = st.secrets.get("SCREENSHOTONE_KEY", "") if hasattr(st, "secrets") else ""
+    if not api_key:
+        api_key = st.text_input(
+            "🔑 ScreenshotOne API Key",
+            type="password",
+            placeholder="API 키 입력 (screenshotone.com 무료 가입 후 발급)",
+            help="Streamlit Secrets에 SCREENSHOTONE_KEY를 등록하면 매번 입력하지 않아도 됩니다."
+        )
 
     if capture_btn and article_url:
-        try:
-            # Step 1: 브라우저 자동 설치
-            with st.spinner("⚙️ 브라우저 준비 중... (처음 1회만 소요, 약 1분)"):
-                ensure_playwright_browser()
+        if not api_key:
+            st.warning("⚠️ ScreenshotOne API 키를 입력해주세요. [무료 발급 →](https://screenshotone.com)")
+        else:
+            try:
+                with st.spinner("📸 기사 페이지 캡쳐 중..."):
+                    screenshot_bytes = capture_via_screenshotone(article_url, api_key)
 
-            # Step 2: 캡쳐
-            with st.spinner("📸 기사 페이지 캡쳐 중..."):
-                screenshot_bytes = capture_url(article_url)
+                st.session_state["url_screenshot"] = screenshot_bytes
+                url_screenshot_bytes = screenshot_bytes
 
-            st.session_state["url_screenshot"] = screenshot_bytes
-            url_screenshot_bytes = screenshot_bytes
+                img_preview = Image.open(io.BytesIO(url_screenshot_bytes))
+                st.image(img_preview, caption="캡쳐된 기사 화면", use_container_width=True)
+                st.success("✅ 기사 캡쳐 완료!")
 
-            img_preview = Image.open(io.BytesIO(url_screenshot_bytes))
-            st.image(img_preview, caption="캡쳐된 기사 화면", use_container_width=True)
-            st.success("✅ 기사 캡쳐 완료!")
-
-        except Exception as e:
-            err_msg = str(e)
-            st.error(f"캡쳐 실패: {err_msg}")
-            st.info(
-                "**해결 방법:**\n"
-                "터미널에서 아래 명령어를 실행한 후 앱을 재시작하세요.\n\n"
-                "```bash\n"
-                "playwright install chromium\n"
-                "# 또는\n"
-                "python -m playwright install chromium\n"
-                "```\n\n"
-                "그래도 안 된다면 이미지 직접 업로드를 이용해주세요."
-            )
+            except Exception as e:
+                st.error(f"캡쳐 실패: {e}")
+                st.info("이미지 직접 업로드 탭을 이용해주세요.")
 
     elif "url_screenshot" in st.session_state:
         url_screenshot_bytes = st.session_state["url_screenshot"]
