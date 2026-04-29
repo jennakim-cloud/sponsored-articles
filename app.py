@@ -11,7 +11,7 @@ from pypdf import PdfReader, PdfWriter
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.units import mm
-from reportlab.platypus import SimpleDocTemplate, Image as RLImage, Spacer, Paragraph, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Image as RLImage, Spacer, Paragraph, PageBreak, Flowable
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
@@ -305,39 +305,43 @@ def pil_to_reportlab_image(pil_img: Image.Image, max_width: float, max_height: f
 
 
 def register_korean_font():
-    """ReportLab에 한글 CID 폰트 등록 (내장 폰트, 별도 설치 불필요)"""
+    """ReportLab에 한글 CID 폰트 등록"""
     try:
         pdfmetrics.registerFont(UnicodeCIDFont("HYGothic-Medium"))
-        pdfmetrics.registerFont(UnicodeCIDFont("HYSMyeongJoStd-Medium"))
     except Exception:
-        pass  # 이미 등록됐거나 없는 폰트는 무시
+        pass
 
 
-def get_korean_font(bold: bool = False) -> str:
-    """사용 가능한 한글 폰트명 반환"""
+class KoreanLabel(Flowable):
+    """한글 섹션 라벨 — canvas.drawString으로 직접 렌더링 (CID 폰트 호환)"""
+    def __init__(self, text, font_size=13, padding=6):
+        super().__init__()
+        self.text = text
+        self.font_size = font_size
+        self.padding = padding
+        self.height = font_size + padding * 2 + 2
+
+    def wrap(self, available_width, available_height):
+        self.width = available_width
+        return self.width, self.height
+
+    def draw(self):
+        c = self.canv
+        # 배경
+        c.setFillColorRGB(0.91, 0.93, 0.97)
+        c.rect(0, 0, self.width, self.height, fill=1, stroke=0)
+        # 왼쪽 강조선
+        c.setFillColorRGB(0.31, 0.56, 0.97)
+        c.rect(0, 0, 3, self.height, fill=1, stroke=0)
+        # 텍스트
+        c.setFillColorRGB(0.1, 0.1, 0.18)
+        c.setFont("HYGothic-Medium", self.font_size)
+        c.drawString(self.padding + 6, self.padding + 1, self.text)
+
+
+def build_section_label(text: str, styles) -> KoreanLabel:
     register_korean_font()
-    # HYGothic-Medium: 고딕(sans-serif) 계열
-    # HYSMyeongJoStd-Medium: 명조(serif) 계열
-    return "HYGothic-Medium"
-
-
-def build_section_label(text: str, styles) -> Paragraph:
-    font_name = get_korean_font()
-    label_style = ParagraphStyle(
-        name="SectionLabel",
-        parent=styles["Normal"],
-        fontSize=13,
-        fontName=font_name,
-        textColor=colors.HexColor("#1a1a2e"),
-        spaceAfter=6,
-        spaceBefore=4,
-        borderPad=6,
-        backColor=colors.HexColor("#e8edf8"),
-        borderColor=colors.HexColor("#4f8ef7"),
-        borderWidth=0,
-        leftIndent=0,
-    )
-    return Paragraph(text, label_style)
+    return KoreanLabel(text)
 
 
 def generate_pdf(sections: dict, filename: str) -> bytes:
