@@ -305,16 +305,25 @@ def pil_to_reportlab_image(pil_img: Image.Image, max_width: float, max_height: f
 # ── 한글 폰트 경로 탐색 (시스템에서 자동 선택) ──
 def _find_korean_font_path() -> str | None:
     candidates = [
-        "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",   # CJK 공통 (현 환경 확인됨)
-        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",        # fonts-nanum 설치 시
+        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",        # fonts-nanum (packages.txt)
+        "/usr/share/fonts/truetype/nanum/NanumBarunGothic.ttf",
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", # Noto CJK
+        "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",
         "/System/Library/Fonts/AppleSDGothicNeo.ttc",             # macOS
         "C:/Windows/Fonts/malgun.ttf",                            # Windows
     ]
     for path in candidates:
         try:
-            ImageFont.truetype(path, 20)
-            return path
+            font = ImageFont.truetype(path, 20)
+            # 한글 렌더링 실제 지원 여부 확인
+            test_img = Image.new("RGB", (200, 40), "white")
+            test_draw = ImageDraw.Draw(test_img)
+            test_draw.text((0, 0), "한글테스트", font=font, fill="black")
+            # 흰색만 있으면 렌더링 실패 (tofu)
+            pixels = list(test_img.getdata())
+            non_white = [p for p in pixels if p != (255, 255, 255)]
+            if non_white:
+                return path
         except Exception:
             continue
     return None
