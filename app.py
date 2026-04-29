@@ -14,6 +14,7 @@ from reportlab.lib.units import mm
 from reportlab.platypus import SimpleDocTemplate, Image as RLImage, Spacer, Paragraph, PageBreak
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.enums import TA_CENTER
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 
 # ─────────────────────────────────────────────
 # 페이지 설정
@@ -303,12 +304,30 @@ def pil_to_reportlab_image(pil_img: Image.Image, max_width: float, max_height: f
     return RLImage(buf, width=draw_w, height=draw_h)
 
 
+def register_korean_font():
+    """ReportLab에 한글 CID 폰트 등록 (내장 폰트, 별도 설치 불필요)"""
+    try:
+        pdfmetrics.registerFont(UnicodeCIDFont("HYGothic-Medium"))
+        pdfmetrics.registerFont(UnicodeCIDFont("HYSMyeongJoStd-Medium"))
+    except Exception:
+        pass  # 이미 등록됐거나 없는 폰트는 무시
+
+
+def get_korean_font(bold: bool = False) -> str:
+    """사용 가능한 한글 폰트명 반환"""
+    register_korean_font()
+    # HYGothic-Medium: 고딕(sans-serif) 계열
+    # HYSMyeongJoStd-Medium: 명조(serif) 계열
+    return "HYGothic-Medium"
+
+
 def build_section_label(text: str, styles) -> Paragraph:
+    font_name = get_korean_font()
     label_style = ParagraphStyle(
         name="SectionLabel",
         parent=styles["Normal"],
         fontSize=13,
-        fontName="Helvetica-Bold",
+        fontName=font_name,
         textColor=colors.HexColor("#1a1a2e"),
         spaceAfter=6,
         spaceBefore=4,
