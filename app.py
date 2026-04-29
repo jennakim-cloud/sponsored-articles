@@ -110,36 +110,83 @@ with article_tab2:
 
     url_screenshot_bytes = None
 
+    def ensure_playwright_browser() -> str:
+        """chromium 실행 파일 경로를 반환. 없으면 자동 설치 후 반환."""
+        import subprocess, shutil
+        # 이미 설치된 경로 탐색
+        result = subprocess.run(
+            ["python", "-m", "playwright", "install", "--dry-run", "chromium"],
+            capture_output=True, text=True
+        )
+        # 설치 시도
+        install = subprocess.run(
+            ["python", "-m", "playwright", "install", "chromium"],
+            capture_output=True, text=True, timeout=300
+        )
+        if install.returncode != 0:
+            raise RuntimeError(f"브라우저 설치 실패:\n{install.stderr}")
+        return "chromium"
+
+    def capture_url(url: str) -> bytes:
+        """URL을 전체 페이지 스크린샷으로 캡쳐 → PNG bytes 반환"""
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--disable-software-rasterizer",
+                ]
+            )
+            page = browser.new_page(
+                viewport={"width": 1280, "height": 900},
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                )
+            )
+            page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            time.sleep(3)  # JS 렌더링 대기
+            page.evaluate("window.scrollTo(0, 0)")
+            screenshot = page.screenshot(full_page=True)
+            browser.close()
+        return screenshot
+
     if capture_btn and article_url:
         try:
-            from playwright.sync_api import sync_playwright
-            with st.spinner("기사 페이지 캡쳐 중..."):
-                with sync_playwright() as p:
-                    browser = p.chromium.launch(
-                        headless=True,
-                        args=["--no-sandbox", "--disable-setuid-sandbox",
-                              "--disable-dev-shm-usage", "--disable-gpu"]
-                    )
-                    page = browser.new_page(viewport={"width": 1280, "height": 900})
-                    page.goto(article_url, wait_until="networkidle", timeout=30000)
-                    time.sleep(2)
+            # Step 1: 브라우저 자동 설치
+            with st.spinner("⚙️ 브라우저 준비 중... (처음 1회만 소요, 약 1분)"):
+                ensure_playwright_browser()
 
-                    # 전체 페이지 스크롤 후 캡쳐
-                    page.evaluate("window.scrollTo(0, 0)")
-                    screenshot_bytes = page.screenshot(full_page=True)
-                    browser.close()
+            # Step 2: 캡쳐
+            with st.spinner("📸 기사 페이지 캡쳐 중..."):
+                screenshot_bytes = capture_url(article_url)
 
-                    url_screenshot_bytes = screenshot_bytes
-                    st.session_state["url_screenshot"] = screenshot_bytes
+            st.session_state["url_screenshot"] = screenshot_bytes
+            url_screenshot_bytes = screenshot_bytes
 
             img_preview = Image.open(io.BytesIO(url_screenshot_bytes))
             st.image(img_preview, caption="캡쳐된 기사 화면", use_container_width=True)
             st.success("✅ 기사 캡쳐 완료!")
 
-        except ImportError:
-            st.error("playwright가 설치되어 있지 않습니다.\n`pip install playwright && playwright install chromium`")
         except Exception as e:
-            st.error(f"캡쳐 실패: {e}\n\n이미지 직접 업로드를 이용해주세요.")
+            err_msg = str(e)
+            st.error(f"캡쳐 실패: {err_msg}")
+            st.info(
+                "**해결 방법:**\n"
+                "터미널에서 아래 명령어를 실행한 후 앱을 재시작하세요.\n\n"
+                "```bash\n"
+                "playwright install chromium\n"
+                "# 또는\n"
+                "python -m playwright install chromium\n"
+                "```\n\n"
+                "그래도 안 된다면 이미지 직접 업로드를 이용해주세요."
+            )
 
     elif "url_screenshot" in st.session_state:
         url_screenshot_bytes = st.session_state["url_screenshot"]
@@ -196,15 +243,75 @@ st.divider()
 # ─────────────────────────────────────────────
 # 헬퍼 함수
 # ─────────────────────────────────────────────
+def pdf_bytes_to_pil_images(file_bytes: bytes) -> list[Image.Image]:
+    """PDF bytes → PIL Image 리스트.
+    pdftoppm(poppler CLI) → pypdf 이미지 추출 순서로 시도.
+    """
+    import subprocess, tempfile, glob, os
+
+    result: list[Image.Image] = []
+
+    # ── 방법 1: pdftoppm (텍스트/이미지 모든 PDF 완벽 렌더링) ──
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf_path = os.path.join(tmpdir, "input.pdf")
+            out_prefix = os.path.join(tmpdir, "page")
+
+            with open(pdf_path, "wb") as f:
+                f.write(file_bytes)
+
+            proc = subprocess.run(
+                ["pdftoppm", "-r", "150", "-png", pdf_path, out_prefix],
+                capture_output=True, timeout=60
+            )
+            if proc.returncode == 0:
+                for png_path in sorted(glob.glob(f"{out_prefix}*.png")):
+                    img = Image.open(png_path).convert("RGB")
+                    result.append(img.copy())  # TemporaryDirectory 닫히기 전 복사
+
+        if result:
+            return result
+    except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
+        pass
+
+    # ── 방법 2: pypdf 내장 이미지 추출 (이미지 전용 PDF) ──
+    try:
+        import pypdf
+        reader = pypdf.PdfReader(io.BytesIO(file_bytes))
+        for page in reader.pages:
+            for img_obj in page.images:
+                try:
+                    pil_img = Image.open(io.BytesIO(img_obj.data)).convert("RGB")
+                    result.append(pil_img)
+                except Exception:
+                    continue
+        if result:
+            return result
+    except Exception:
+        pass
+
+    return result
+
+
 def file_to_pil_images(uploaded_file) -> list[Image.Image]:
     """업로드 파일(이미지/PDF)을 PIL Image 리스트로 변환"""
     file_bytes = uploaded_file.read()
     name_lower = uploaded_file.name.lower()
 
     if name_lower.endswith(".pdf"):
-        from pdf2image import convert_from_bytes
-        images = convert_from_bytes(file_bytes, dpi=150)
-        return images
+        images = pdf_bytes_to_pil_images(file_bytes)
+        if images:
+            return images
+
+        # 최종 실패 시 안내 이미지
+        from PIL import ImageDraw
+        img = Image.new("RGB", (1240, 1754), "white")
+        ImageDraw.Draw(img).text(
+            (60, 80),
+            "PDF 변환 실패 — 이미지(JPG/PNG)로 변환 후 업로드해 주세요.",
+            fill=(200, 0, 0),
+        )
+        return [img]
     else:
         img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
         return [img]
