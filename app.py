@@ -275,8 +275,7 @@ def file_to_pil_images(uploaded_file) -> list[Image.Image]:
         if images:
             return images
 
-        # 최종 실패 시 안내 이미지
-        from PIL import Image, ImageDraw, ImageFontDraw
+        # 최종 실패 시 안내 이미지 (상단 import의 Image, ImageDraw 사용)
         img = Image.new("RGB", (1240, 1754), "white")
         ImageDraw.Draw(img).text(
             (60, 80),
