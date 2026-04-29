@@ -92,6 +92,12 @@ st.divider()
 # ─────────────────────────────────────────────
 st.markdown('<div class="section-label">① 웹 기사 캡쳐본</div>', unsafe_allow_html=True)
 
+article_date = st.text_input(
+    "📅 게재 날짜",
+    placeholder="예: 2025년 06월 15일",
+    help="PDF 섹션 제목에 표시됩니다."
+)
+
 article_tab1, article_tab2 = st.tabs(["🖼️ 이미지 직접 업로드", "🔗 기사 URL로 자동 캡쳐"])
 
 with article_tab1:
@@ -469,7 +475,8 @@ else:
             with st.spinner("PDF를 생성하는 중..."):
                 sections = {}
                 if article_images:
-                    sections[f"① 웹 기사 캡쳐본 ({media_name})"] = article_images
+                    date_str = article_date.strip() if article_date.strip() else "날짜 미입력"
+                    sections[f"① 게재 기사 ({media_name}, {date_str})"] = article_images
                 if invoice_images:
                     sections["② 발행된 계산서"] = invoice_images
                 if biz_images:
