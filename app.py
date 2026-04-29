@@ -304,10 +304,17 @@ def pil_to_reportlab_image(pil_img: Image.Image, max_width: float, max_height: f
     return RLImage(buf, width=draw_w, height=draw_h)
 
 
+KOREAN_FONT_NAME = "HYGothic-Medium"
+_korean_font_registered = False
+
 def register_korean_font():
-    """ReportLab에 한글 CID 폰트 등록"""
+    """ReportLab에 한글 CID 폰트 등록 — 중복 등록 방지"""
+    global _korean_font_registered
+    if _korean_font_registered:
+        return
     try:
-        pdfmetrics.registerFont(UnicodeCIDFont("HYGothic-Medium"))
+        pdfmetrics.registerFont(UnicodeCIDFont(KOREAN_FONT_NAME))
+        _korean_font_registered = True
     except Exception:
         pass
 
@@ -326,6 +333,8 @@ class KoreanLabel(Flowable):
         return self.width, self.height
 
     def draw(self):
+        # draw()는 doc.build() 내부에서 호출되므로 여기서 다시 등록 보장
+        register_korean_font()
         c = self.canv
         # 배경
         c.setFillColorRGB(0.91, 0.93, 0.97)
@@ -335,7 +344,7 @@ class KoreanLabel(Flowable):
         c.rect(0, 0, 3, self.height, fill=1, stroke=0)
         # 텍스트
         c.setFillColorRGB(0.1, 0.1, 0.18)
-        c.setFont("HYGothic-Medium", self.font_size)
+        c.setFont(KOREAN_FONT_NAME, self.font_size)
         c.drawString(self.padding + 6, self.padding + 1, self.text)
 
 
